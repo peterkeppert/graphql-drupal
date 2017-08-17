@@ -18,7 +18,7 @@ class ViewResultListDeriver extends ViewDeriverBase {
     foreach (Views::getApplicableViews('graphql_display') as list($viewId, $displayId)) {
       /** @var \Drupal\views\ViewEntityInterface $view */
       $view = $viewStorage->load($viewId);
-      $display = $view->getDisplay($displayId);
+      $display = $this->getViewDisplay($view, $displayId);
 
       if (!$this->isPaged($display)) {
         // Skip if the display doesn't expose a pager.
@@ -33,7 +33,7 @@ class ViewResultListDeriver extends ViewDeriverBase {
 
       $id = implode('-', [$viewId, $displayId, 'result', 'list']);
 
-      $typeName = graphql_core_camelcase($type);
+      $typeName = graphql_camelcase($type);
 
       if (!$this->interfaceExists($typeName)) {
         $typeName = 'Entity';
@@ -44,7 +44,7 @@ class ViewResultListDeriver extends ViewDeriverBase {
         'name' => 'results',
         'type' => $typeName,
         'types' => [
-          graphql_core_camelcase(implode('_', [$viewId, $displayId, 'result'])),
+          graphql_camelcase(implode('_', [$viewId, $displayId, 'result'])),
         ],
         'multi' => TRUE,
         'view' => $viewId,

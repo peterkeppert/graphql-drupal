@@ -2,7 +2,9 @@
 
 namespace Drupal\graphql_views\Plugin\GraphQL\Fields;
 
+use Drupal\Core\Cache\CacheableMetadata;
 use Drupal\Core\DependencyInjection\DependencySerializationTrait;
+use Drupal\Core\Entity\EntityInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Plugin\ContainerFactoryPluginInterface;
 use Drupal\graphql_core\GraphQL\FieldPluginBase;
@@ -67,14 +69,54 @@ class View extends FieldPluginBase implements ContainerFactoryPluginInterface {
       $executable = $view->getExecutable();
       $executable->setDisplay($definition['display']);
 
+      // Set view contextual filters.
+      /* @see \Drupal\graphql_views\Plugin\Deriver\ViewDeriverBase::getArgumentsInfo() */
+      if (!empty($definition['arguments_info'])) {
+        $viewArguments = [];
+        foreach ($definition['arguments_info'] as $argumentId => $argumentInfo) {
+          if (isset($args['contextual_filter'][$argumentId])) {
+            $viewArguments[$argumentInfo['index']] = $args['contextual_filter'][$argumentId];
+          }
+          elseif (
+            $value instanceof EntityInterface &&
+            $value->getEntityTypeId() === $argumentInfo['entity_type'] &&
+            (empty($argumentInfo['bundles']) ||
+              in_array($value->bundle(), $argumentInfo['bundles'], TRUE))
+          ) {
+            $viewArguments[$argumentInfo['index']] = $value->id();
+          }
+          else {
+            $viewArguments[$argumentInfo['index']] = NULL;
+          }
+        }
+        $executable->setArguments($viewArguments);
+      }
+
       // Prepare arguments for use as exposed form input.
       $input = array_filter([
         // Sorting arguments.
         'sort_by' => isset($args['sortBy']) ? $args['sortBy'] : NULL,
         'sort_order' => isset($args['sortDirection']) ? $args['sortDirection'] : NULL,
-      ] + (array_key_exists('filter', $args) ? $args['filter'] : []));
+      ]);
+
+      // If some filters are missing from the input, set them to an empty string
+      // explicitly. Otherwise views module generates "Undefined index" notice.
+      $filters = $executable->getDisplay()->getOption('filters');
+      foreach ($filters as $filterKey => $filterRow) {
+        $inputKey = $filterRow['expose']['identifier'];
+        if (!isset($args['filter'][$filterKey])) {
+          $input[$inputKey] = $filterRow['value'];
+        } else {
+          $input[$inputKey] = $args['filter'][$filterKey];
+        }
+      }
 
       $executable->setExposedInput($input);
+      // This is a workaround for the Taxonomy Term filter which requires a full
+      // exposed form to be sent OR the display being an attachment to just
+      // accept input values.
+      $executable->is_attachment = TRUE;
+      $executable->exposed_raw_input = $input;
 
       if ($definition['paged']) {
         // Set paging parameters.
@@ -90,6 +132,24 @@ class View extends FieldPluginBase implements ContainerFactoryPluginInterface {
         }
       }
     }
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  protected function getCacheDependencies($result, $value, array $args) {
+    // If the view is not paged, it's simply a list of rows. Since these are
+    // entities, they should implement CacheableDependencyInterface anyways.
+    if (!$this->getPluginDefinition()['paged']) {
+      return parent::getCacheDependencies($result, $value, $args);
+    }
+
+    /** @var \Drupal\Views\ViewExecutable $executable */
+    $executable = reset($result);
+    $metadata = new CacheableMetadata();
+    $metadata->setCacheTags($executable->getCacheTags());
+
+    return $metadata;
   }
 
 }

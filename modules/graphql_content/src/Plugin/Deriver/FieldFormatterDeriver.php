@@ -7,6 +7,7 @@ use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Field\FieldStorageDefinitionInterface;
 use Drupal\Core\Plugin\Discovery\ContainerDeriverInterface;
 use Drupal\Core\Entity\EntityFieldManagerInterface;
+use Drupal\graphql_content\ContentEntitySchemaConfig;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
@@ -29,6 +30,13 @@ class FieldFormatterDeriver extends DeriverBase implements ContainerDeriverInter
   protected $entityFieldManager;
 
   /**
+   * The content entity schema configuration service.
+   *
+   * @var \Drupal\graphql_content\ContentEntitySchemaConfig
+   */
+  protected $config;
+
+  /**
    * The base plugin id.
    *
    * @var string
@@ -42,6 +50,7 @@ class FieldFormatterDeriver extends DeriverBase implements ContainerDeriverInter
     return new static(
       $container->get('entity_type.manager'),
       $container->get('entity_field.manager'),
+      $container->get('graphql_content.schema_config'),
       $basePluginId);
   }
 
@@ -52,17 +61,21 @@ class FieldFormatterDeriver extends DeriverBase implements ContainerDeriverInter
    *   An entity type manager instance.
    * @param \Drupal\Core\Entity\EntityFieldManagerInterface $entityFieldManager
    *   An entity field manager instance.
+   * @param \Drupal\graphql_content\ContentEntitySchemaConfig $config
+   *   A schema configuration service.
    * @param string $basePluginId
    *   The base plugin id.
    */
   public function __construct(
     EntityTypeManagerInterface $entityTypeManager,
     EntityFieldManagerInterface $entityFieldManager,
+    ContentEntitySchemaConfig $config,
     $basePluginId
   ) {
     $this->basePluginId = $basePluginId;
     $this->entityTypeManager = $entityTypeManager;
     $this->entityFieldManager = $entityFieldManager;
+    $this->config = $config;
   }
 
   /**
@@ -83,9 +96,9 @@ class FieldFormatterDeriver extends DeriverBase implements ContainerDeriverInter
   protected function getDefinition($entityType, $bundle, array $displayOptions, FieldStorageDefinitionInterface $storage = NULL) {
     return [
       'types' => [
-        graphql_core_camelcase([$entityType, $bundle]),
+        graphql_camelcase([$entityType, $bundle]),
       ],
-      'name' => graphql_core_propcase($storage->getName()),
+      'name' => graphql_propcase($storage->getName()),
       'virtual' => !$storage,
       'multi' => $storage ? $storage->getCardinality() != 1 : FALSE,
       'nullable' => TRUE,
@@ -94,34 +107,68 @@ class FieldFormatterDeriver extends DeriverBase implements ContainerDeriverInter
   }
 
   /**
+   * Provide an array of plugin definition values from field storage and display
+   * options.
+   *
+   * @param string $entityType
+   *   The host entity type.
+   * @param string $bundle
+   *   The host entity bundle.
+   * @param array $displayOptions
+   *   Array of display options.
+   * @param \Drupal\Core\Field\FieldStorageDefinitionInterface|null $storage
+   *   Field storage definition object.
+   *
+   * @return array
+   *   An array of plugin definition arrays.
+   */
+  protected function getDefinitions($entityType, $bundle, array $displayOptions, FieldStorageDefinitionInterface $storage = NULL) {
+    if ($definition = $this->getDefinition($entityType, $bundle, $displayOptions, $storage)) {
+      $id = implode('-', [$entityType, $bundle, $storage->getName()]);
+      return [$id => $definition + [
+        'id' => $id,
+      ]];
+    }
+
+    return [];
+  }
+  /**
    * {@inheritdoc}
    */
   public function getDerivativeDefinitions($basePluginDefinition) {
     $this->derivatives = [];
 
     /** @var \Drupal\Core\Entity\Display\EntityViewDisplayInterface[] $displays */
-    $displays = $this->entityTypeManager->getStorage('entity_view_display')->loadByProperties([
-      'mode' => 'graphql',
-    ]);
-
+    $displays = $this->entityTypeManager->getStorage('entity_view_display')->loadMultiple();
     foreach ($displays as $display) {
       $entityType = $display->getTargetEntityTypeId();
       $bundle = $display->getTargetBundle();
-      $storages = $this->entityFieldManager->getFieldStorageDefinitions($entityType);
 
+      if ($this->config->getExposedViewMode($entityType, $bundle) !== $display->getMode()) {
+        continue;
+      }
+
+      $storages = $this->entityFieldManager->getFieldStorageDefinitions($entityType);
       foreach ($display->getComponents() as $fieldName => $component) {
-        if (isset($component['type']) && $component['type'] === $basePluginDefinition['field_formatter']) {
-          $storage = array_key_exists($fieldName, $storages) ? $storages[$fieldName] : NULL;
-          /** @var \Drupal\Core\Field\FieldStorageDefinitionInterface $storage */
-          $id = implode('-', [$entityType, $bundle, $storage->getName()]);
-          $this->derivatives[$id] = [
-            'id' => implode('-', [$entityType, $bundle, $storage->getName()]),
-          ] + $this->getDefinition($entityType, $bundle, $component, $storage) + $basePluginDefinition;
+        if (!isset($component['type']) || $component['type'] !== $basePluginDefinition['field_formatter']) {
+          continue;
+        }
+
+        if (!array_key_exists($fieldName, $storages)) {
+          continue;
+        }
+
+        /** @var \Drupal\Core\Field\FieldStorageDefinitionInterface $storage */
+        $storage = $storages[$fieldName];
+        if ($definitions = $this->getDefinitions($entityType, $bundle, $component, $storage)) {
+          foreach ($definitions as $id => $definition) {
+            $this->derivatives[$id] = $definition + $basePluginDefinition;
+          }
         }
       }
     }
 
-    return parent::getDerivativeDefinitions($basePluginDefinition);
+    return $this->derivatives;
   }
 
 }

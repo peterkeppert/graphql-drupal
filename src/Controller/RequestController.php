@@ -11,6 +11,7 @@ use Drupal\Core\Config\Config;
 use Drupal\Core\DependencyInjection\ContainerInjectionInterface;
 use Drupal\Core\Render\RenderContext;
 use Drupal\Core\Render\RendererInterface;
+use Drupal\Core\Url;
 use Drupal\graphql\GraphQL\Execution\Processor;
 use Drupal\graphql\Reducers\ReducerManager;
 use Symfony\Component\DependencyInjection\ContainerInterface;
@@ -154,12 +155,13 @@ class RequestController implements ContainerInjectionInterface {
 
       // Make sure we remove the 'queries' parameter, otherwise the subsequent
       // request could trigger the batch processing again.
-      $parameters = array_merge($requestParameters, $query);
-      $content = $method === 'POST' ? array_merge($query, $requestContent) : FALSE;
+      $parameters = array_merge((array) $requestParameters, (array) $query);
+      $content = $method === 'POST' ? array_merge((array) $query, (array) $requestContent) : FALSE;
       $content = $content ? json_encode($content) : '';
+      $graphqlUrl = Url::fromUri('internal:/graphql')->toString(TRUE)->getGeneratedUrl();
 
       $subRequest = Request::create(
-        '/graphql',
+        $graphqlUrl,
         $method,
         $parameters,
         $request->cookies->all(),
@@ -245,7 +247,7 @@ class RequestController implements ContainerInjectionInterface {
 
     // Set the execution context on the request attributes for use in the
     // request subscriber and cache policies.
-    $request->attributes->set('context', $processor->getExecutionContext());
+    $request->attributes->set('graphql_execution_context', $processor->getExecutionContext());
 
     return $response;
   }

@@ -11,6 +11,7 @@ use Drupal\graphql_core\GraphQL\Traits\PluginTrait;
 use Drupal\graphql_core\GraphQLPluginInterface;
 use Drupal\graphql_core\GraphQLSchemaManagerInterface;
 use Youshido\GraphQL\Config\Field\FieldConfig;
+use Youshido\GraphQL\Execution\DeferredResolver;
 use Youshido\GraphQL\Execution\ResolveInfo;
 use Youshido\GraphQL\Field\AbstractField;
 
@@ -24,21 +25,73 @@ abstract class FieldPluginBase extends AbstractField implements GraphQLPluginInt
   use ArgumentAwarePluginTrait;
 
   /**
+   * Dummy implementation for `getBatchId` in `BatchedFieldInterface`.
+   *
+   * This provides an empty implementation of `getBatchId` in case the subclass
+   * implements `BatchedFieldInterface`. In may cases this will suffice since
+   * the batches are already grouped by the class implementing `resolveBatch`.
+   * `getBatchId` is only necessary for cases where batch grouping depends on
+   * runtime arguments.
+   *
+   * @param mixed $parent
+   *   The parent value in the result tree.
+   * @param array $arguments
+   *   The list of arguments.
+   * @param ResolveInfo $info
+   *   The graphql resolve info object.
+   *
+   * @return string
+   *   The batch key.
+   */
+  public function getBatchId($parent, array $arguments, ResolveInfo $info) {
+    return '';
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function __construct(array $configuration, $pluginId, $pluginDefinition) {
+    $this->constructPlugin($configuration, $pluginId, $pluginDefinition);
+  }
+
+  /**
    * {@inheritdoc}
    */
   public function resolve($value, array $args, ResolveInfo $info) {
+    if ($this instanceof BatchedFieldInterface) {
+      $result = $this->getBatchedFieldResolver()->add($this, $value, $args, $info);
+      return new DeferredResolver(function () use ($result, $args, $info, $value) {
+        $result = iterator_to_array($this->resolveValues($result(), $args, $info));
+        return $this->cacheable($result, $value, $args);
+      });
+    }
     $result = iterator_to_array($this->resolveValues($value, $args, $info));
+    return $this->cacheable($result, $value, $args);
+  }
+
+  /**
+   * Wrap the result in a CacheableValue.
+   *
+   * @param mixed $result
+   *   The field result.
+   * @param mixed $value
+   *   The parent value.
+   * @param array $args
+   *   The field arguments.
+   *
+   * @return CacheableValue
+   *   The cacheable value.
+   */
+  protected function cacheable($result, $value, array $args) {
     if ($this->getPluginDefinition()['multi']) {
-      return new CacheableValue($result, $this->getCacheDependencies($value, $args, $result));
+      return new CacheableValue($result, $this->getCacheDependencies($result, $value, $args));
     }
-    else {
-      if ($result) {
-        return new CacheableValue(reset($result), $this->getCacheDependencies($value, $args, $result));
-      }
-      else {
-        return new CacheableValue(NULL, $this->getCacheDependencies($value, $args, $result));
-      }
+
+    if ($result) {
+      return new CacheableValue(reset($result), $this->getCacheDependencies($result, $value, $args));
     }
+
+    return new CacheableValue(NULL, $this->getCacheDependencies($result, $value, $args));
   }
 
   /**
@@ -46,7 +99,7 @@ abstract class FieldPluginBase extends AbstractField implements GraphQLPluginInt
    *
    * @param mixed $result
    *   The result of the field.
-   * @param mixed $value
+   * @param mixed $parent
    *   The parent value.
    * @param array $args
    *   The arguments passed to the field.
@@ -54,9 +107,9 @@ abstract class FieldPluginBase extends AbstractField implements GraphQLPluginInt
    * @return array
    *   A list of cacheable dependencies.
    */
-  protected function getCacheDependencies($result, $value, array $args) {
+  protected function getCacheDependencies($result, $parent, array $args) {
     // Default implementation just returns the value itself.
-    return isset($result) ? [$result, $value] : [$value];
+    return $result;
   }
 
   /**
@@ -108,4 +161,5 @@ abstract class FieldPluginBase extends AbstractField implements GraphQLPluginInt
   public function build(FieldConfig $config) {
     // May be overridden, but not required any more.
   }
+
 }

@@ -69,6 +69,19 @@ class EntityRenderedFieldsTest extends GraphQLFileTestBase {
       ->grantPermission('access content')
       ->grantPermission('access user profiles')
       ->save();
+
+    $this->container->get('config.factory')->getEditable('graphql_content.schema')
+      ->set('types', [
+        'node' => [
+          'exposed' => TRUE,
+          'bundles' => [
+            'test' => [
+              'exposed' => TRUE,
+              'view_mode' => 'node.graphql',
+            ],
+          ],
+        ],
+      ])->save();
   }
 
   /**
@@ -95,6 +108,7 @@ class EntityRenderedFieldsTest extends GraphQLFileTestBase {
     $this->assertNotNull($node, 'A node has been retrieved.');
 
     $this->assertEquals('<p>test</p>', $node['body'], 'Body field retrieved properly.');
+    $this->assertEquals('<p>test</p>', $node['content'], 'Body alias field retrieved properly.');
     $this->assertEquals([
       '<p>a</p>',
       '<p>b</p>',

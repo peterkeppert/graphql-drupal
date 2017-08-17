@@ -11,6 +11,7 @@ use Youshido\GraphQL\Execution\ResolveInfo;
  * @GraphQLField(
  *   id = "character",
  *   name = "character",
+ *   enum_type_name = "CharacterEnum",
  *   type = {
  *     "a" = "Alpha",
  *     "b" = "Beta",
@@ -18,6 +19,7 @@ use Youshido\GraphQL\Execution\ResolveInfo;
  *   },
  *   arguments = {
  *     "character" = {
+ *       "enum_type_name" = "CharacterEnum",
  *       "type" = {
  *         "a" = "Alpha",
  *         "b" = "Beta",
